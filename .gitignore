@@ -1,0 +1,16 @@
+.vscode/
+.DS_Store
+*/.DS_Store
+*/*/.DS_Store
+
+*pth
+*png
+*jpg
+*jpeg
+*gif
+*bmp
+*tiff
+*ico
+
+*pyc
+*ckpt
