@@ -279,7 +279,11 @@ if __name__ == "__main__":
     rank = int(args.rank)
     rank_episode_list = episode_list[rank*chunk_size:(rank+1)*chunk_size]
     for episode_id in tqdm(rank_episode_list):
-        output_folder = os.path.join(savedir, episode_id)
+        if return_flag:
+            prefix = 'return'
+        else:
+            prefix = 'noreturn'
+        output_folder = os.path.join(savedir, prefix, episode_id)
         os.makedirs(output_folder, exist_ok=True)
         images_dir = os.path.join(processed_video_dir, episode_id, 'images')
         all_image_paths = os.listdir(images_dir)
