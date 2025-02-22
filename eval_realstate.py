@@ -58,6 +58,11 @@ def calculate_score(pil_img1, pil_img2, device):
         data_range = 1.0
     else:
         raise ValueError("Unsupported dtype. Use uint8, uint16, or float.")
+    
+    # # Compute PSNR
+    # mse = np.mean((img1 - img2) ** 2)
+    # psnr_value = 20 * np.log10(data_range / np.sqrt(mse))
+    
 
     # Convert images to torch tensors
     img1_tensor = torch.from_numpy(img1)
@@ -65,7 +70,7 @@ def calculate_score(pil_img1, pil_img2, device):
 
     # Compute PSNR
     loss_fn_alex = lpips.LPIPS(net='alex').to(device)
-    psnr_metric = PeakSignalNoiseRatio()
+    psnr_metric = PeakSignalNoiseRatio(data_range=data_range)
     psnr_metric.update(img2_tensor.to(torch.float32), img1_tensor.to(torch.float32))
     psnr_value = psnr_metric.compute()
     psnr_metric.reset()
@@ -257,7 +262,7 @@ if __name__ == "__main__":
     device = "cuda"
     mode = 'test'
     
-    return_flag = True
+    return_flag = False
     diffusion_num_frames = 14
     num_steps = args.ddim_steps
     
@@ -279,186 +284,190 @@ if __name__ == "__main__":
     rank = int(args.rank)
     rank_episode_list = episode_list[rank*chunk_size:(rank+1)*chunk_size]
     for episode_id in tqdm(rank_episode_list):
-        if return_flag:
-            prefix = 'return'
-        else:
-            prefix = 'noreturn'
-        output_folder = os.path.join(savedir, prefix, episode_id)
-        os.makedirs(output_folder, exist_ok=True)
-        images_dir = os.path.join(processed_video_dir, episode_id, 'images')
-        all_image_paths = os.listdir(images_dir)
-        timestamps = [int(os.path.splitext(image)[0]) for image in all_image_paths]
-        timestamps.sort()
-
-        all_image_paths = [os.path.join(images_dir, f"{timestamp}.png") for timestamp in timestamps]
-        episode_psnr = []
-        episode_lpips = []
-        episode_fid = []
-        if not os.path.exists(os.path.join(output_folder, 'final_0.png')):
-
-
-            init_image_path = all_image_paths[0]
-            episode_meta_file = os.path.join(meta_file, mode, f"{episode_id}.txt")
-            camera_poses = []
-            with open(episode_meta_file, 'r') as f:
-                lines = f.readlines()
-            for line in lines:
-                if line.startswith('https://www.youtube.com/watch?v='):
-                    continue
-                info = line.split(' ')
-                timestamp = int(info[0])
-                if timestamp in timestamps:
-
-                    camera_pose = np.array(info[7:19], dtype=np.float32)
-                    camera_poses.append(camera_pose)
-
-            camera_poses = np.array(camera_poses)
-            camera_poses = to_relative_RT2(camera_poses)
-            
-            
+        try:
             if return_flag:
-                camera_poses = np.concatenate([camera_poses, camera_poses[::-1]], axis=0)
-                all_image_paths = all_image_paths + all_image_paths[::-1]
-            actual_num_frames = len(camera_poses)
-        
-            # camera_pose_path = os.path.join(episode_dir, 'poses', f"{timestamp}.json")
-
-            camera_poses = torch.from_numpy(camera_poses)
-            if actual_num_frames < diffusion_num_frames:
-                num_additional_frames = diffusion_num_frames - actual_num_frames
-                camera_poses = torch.cat([camera_poses, camera_poses[-1:].repeat(num_additional_frames,  1)], axis=0)
-                generation_steps = 1
-            elif actual_num_frames > diffusion_num_frames:
-                generation_steps = (actual_num_frames - 1) // (diffusion_num_frames-1) + 1
-                camera_poses = torch.cat([camera_poses, camera_poses[-1:].repeat(generation_steps*(diffusion_num_frames-1)+1 - actual_num_frames, 1)], axis=0)
-                
+                prefix = 'return'
             else:
-                generation_steps = 1
-            camera_poses = camera_poses.unsqueeze(0).repeat(2,1,1).to(device)
+                prefix = 'noreturn'
+            output_folder = os.path.join(savedir, prefix, episode_id)
+            os.makedirs(output_folder, exist_ok=True)
+            images_dir = os.path.join(processed_video_dir, episode_id, 'images')
+            all_image_paths = os.listdir(images_dir)
+            timestamps = [int(os.path.splitext(image)[0]) for image in all_image_paths]
+            timestamps.sort()
 
-            
-            
-            
-            diffusion_result_pil = []
-            
-            for i in range(generation_steps):
+            all_image_paths = [os.path.join(images_dir, f"{timestamp}.png") for timestamp in timestamps]
+            episode_psnr = []
+            episode_lpips = []
+            episode_fid = []
+            if not os.path.exists(os.path.join(output_folder, 'final_0.png')):
 
-                if i == 0:
-                    image_path = init_image_path
+
+                init_image_path = all_image_paths[0]
+                episode_meta_file = os.path.join(meta_file, mode, f"{episode_id}.txt")
+                camera_poses = []
+                with open(episode_meta_file, 'r') as f:
+                    lines = f.readlines()
+                for line in lines:
+                    if line.startswith('https://www.youtube.com/watch?v='):
+                        continue
+                    info = line.split(' ')
+                    timestamp = int(info[0])
+                    if timestamp in timestamps:
+
+                        camera_pose = np.array(info[7:19], dtype=np.float32)
+                        camera_poses.append(camera_pose)
+
+                camera_poses = np.array(camera_poses)
+                camera_poses = to_relative_RT2(camera_poses)
+                
+                
+                if return_flag:
+                    camera_poses = np.concatenate([camera_poses, camera_poses[::-1]], axis=0)
+                    all_image_paths = all_image_paths + all_image_paths[::-1]
+                actual_num_frames = len(camera_poses)
+            
+                # camera_pose_path = os.path.join(episode_dir, 'poses', f"{timestamp}.json")
+
+                camera_poses = torch.from_numpy(camera_poses)
+                if actual_num_frames < diffusion_num_frames:
+                    num_additional_frames = diffusion_num_frames - actual_num_frames
+                    camera_poses = torch.cat([camera_poses, camera_poses[-1:].repeat(num_additional_frames,  1)], axis=0)
+                    generation_steps = 1
+                elif actual_num_frames > diffusion_num_frames:
+                    generation_steps = (actual_num_frames - 1) // (diffusion_num_frames-1) + 1
+                    camera_poses = torch.cat([camera_poses, camera_poses[-1:].repeat(generation_steps*(diffusion_num_frames-1)+1 - actual_num_frames, 1)], axis=0)
+                    
                 else:
-                    last_image_pil = diffusion_result_pil[-1]
-                    image_path = os.path.join(output_folder, f'{i}.png')
-                    last_image_pil.save(image_path)
-                current_camera_traj = camera_poses[:, i*(diffusion_num_frames-1):(i+1)*(diffusion_num_frames-1)+1]
-                image = Image.open(image_path)
-                image = image.resize((args.width, args.height))
-                image = ToTensor()(image)
-                image = image * 2.0 - 1.0
-
-                image = image.unsqueeze(0).to(device)
-                H, W = image.shape[2:]
-                assert image.shape[1] == 3
-                scale_factor = 8
-                C = 4
-                shape = (diffusion_num_frames, C, H // scale_factor, W // scale_factor)
+                    generation_steps = 1
+                camera_poses = camera_poses.unsqueeze(0).repeat(2,1,1).to(device)
 
                 
-                value_dict = {}
-                value_dict["motion_bucket_id"] = 127
-                value_dict["fps_id"] = 6
-                value_dict["cond_aug"] = 0.02
-                value_dict["cond_frames_without_noise"] = image
-                value_dict["cond_frames"] = image + 0.02 * torch.randn_like(image)
+                
+                
+                diffusion_result_pil = []
+                
+                for i in range(generation_steps):
 
-                with torch.no_grad():
-                    with torch.autocast(device):
-                        batch, batch_uc = get_batch(
-                            get_unique_embedder_keys_from_conditioner(model.conditioner),
-                            value_dict,
-                            [1, diffusion_num_frames],
-                            T=diffusion_num_frames,
-                            device=device,
-                        )
-                        c, uc = model.conditioner.get_unconditional_conditioning(
-                            batch,
-                            batch_uc=batch_uc,
-                            force_uc_zero_embeddings=[
-                                "cond_frames",
-                                "cond_frames_without_noise",
-                            ],
-                        )
+                    if i == 0:
+                        image_path = init_image_path
+                    else:
+                        last_image_pil = diffusion_result_pil[-1]
+                        image_path = os.path.join(output_folder, f'{i}.png')
+                        last_image_pil.save(image_path)
+                    current_camera_traj = camera_poses[:, i*(diffusion_num_frames-1):(i+1)*(diffusion_num_frames-1)+1]
+                    image = Image.open(image_path)
+                    image = image.resize((args.width, args.height))
+                    image = ToTensor()(image)
+                    image = image * 2.0 - 1.0
 
-                        for k in ["crossattn", "concat"]:
-                            uc[k] = repeat(uc[k], "b ... -> b t ...", t=diffusion_num_frames)
-                            uc[k] = rearrange(uc[k], "b t ... -> (b t) ...", t=diffusion_num_frames)
-                            c[k] = repeat(c[k], "b ... -> b t ...", t=diffusion_num_frames)
-                            c[k] = rearrange(c[k], "b t ... -> (b t) ...", t=diffusion_num_frames)
+                    image = image.unsqueeze(0).to(device)
+                    H, W = image.shape[2:]
+                    assert image.shape[1] == 3
+                    scale_factor = 8
+                    C = 4
+                    shape = (diffusion_num_frames, C, H // scale_factor, W // scale_factor)
 
-                        
+                    
+                    value_dict = {}
+                    value_dict["motion_bucket_id"] = 127
+                    value_dict["fps_id"] = 6
+                    value_dict["cond_aug"] = 0.02
+                    value_dict["cond_frames_without_noise"] = image
+                    value_dict["cond_frames"] = image + 0.02 * torch.randn_like(image)
 
-                        additional_model_inputs = {}
-                        additional_model_inputs["image_only_indicator"] = torch.zeros(
-                            2, diffusion_num_frames
-                        ).to(device)
-                        #additional_model_inputs["image_only_indicator"][:,0] = 1
-                        additional_model_inputs["num_video_frames"] = batch["num_video_frames"]
-
-                        
-                        additional_model_inputs["RT"] = current_camera_traj
-
-                        def denoiser(input, sigma, c):
-                            return model.denoiser(
-                                model.model, input, sigma, c, **additional_model_inputs
+                    with torch.no_grad():
+                        with torch.autocast(device):
+                            batch, batch_uc = get_batch(
+                                get_unique_embedder_keys_from_conditioner(model.conditioner),
+                                value_dict,
+                                [1, diffusion_num_frames],
+                                T=diffusion_num_frames,
+                                device=device,
+                            )
+                            c, uc = model.conditioner.get_unconditional_conditioning(
+                                batch,
+                                batch_uc=batch_uc,
+                                force_uc_zero_embeddings=[
+                                    "cond_frames",
+                                    "cond_frames_without_noise",
+                                ],
                             )
 
-                        results = []
-                    
-                        randn = torch.randn(shape, device=device)
-                        samples_z = model.sampler(denoiser, randn, cond=c, uc=uc)
-                        model.en_and_decode_n_samples_a_time = 1
-                        samples_x = model.decode_first_stage(samples_z)
-                        samples = torch.clamp((samples_x + 1.0) / 2.0, min=0.0, max=1.0) # [1*t, c, h, w]
-                        results.append(samples)
+                            for k in ["crossattn", "concat"]:
+                                uc[k] = repeat(uc[k], "b ... -> b t ...", t=diffusion_num_frames)
+                                uc[k] = rearrange(uc[k], "b t ... -> (b t) ...", t=diffusion_num_frames)
+                                c[k] = repeat(c[k], "b ... -> b t ...", t=diffusion_num_frames)
+                                c[k] = rearrange(c[k], "b t ... -> (b t) ...", t=diffusion_num_frames)
 
-                        samples = torch.stack(results, dim=0) # [sample_num, t, c, h, w]
-                        samples = samples.data.cpu()
-                        samples = samples[0]
+                            
 
-                        if i == generation_steps - 1:
-                            for j in range((actual_num_frames-1)%(diffusion_num_frames-1)+1):
-                                if i !=0 and j == 0:
-                                    continue # skip the repeated first frame
-                                diffusion_result_pil.append(Image.fromarray((samples[j].permute(1, 2, 0) * 255).numpy().astype(np.uint8)))
-                        else:
-                            for j in range(diffusion_num_frames):
-                                if i !=0 and j == 0:
-                                    continue # skip the repeated first frame
-                                diffusion_result_pil.append(Image.fromarray((samples[j].permute(1, 2, 0) * 255).numpy().astype(np.uint8)))
-                      
-            print(f"saving {len(diffusion_result_pil)} images to {output_folder}")
-            for i, pil_img in enumerate(diffusion_result_pil):
-                pil_img.save(os.path.join(output_folder, f'final_{i}.png'))
-        else:
-            diffusion_result_pil = [Image.open(os.path.join(output_folder, image)) for image in os.listdir(output_folder) if image.startswith('final_')]
-            print(f"loading {len(diffusion_result_pil)} images from {output_folder}")
-            if return_flag:
-                all_image_paths = all_image_paths + all_image_paths[::-1]
-        
-        all_images = [Image.open(image_path).resize((args.width, args.height)) for image_path in all_image_paths]
+                            additional_model_inputs = {}
+                            additional_model_inputs["image_only_indicator"] = torch.zeros(
+                                2, diffusion_num_frames
+                            ).to(device)
+                            #additional_model_inputs["image_only_indicator"][:,0] = 1
+                            additional_model_inputs["num_video_frames"] = batch["num_video_frames"]
 
-        for i in range(len(diffusion_result_pil)):
-            psnr_value, lpips_value, fid_value = calculate_score(diffusion_result_pil[i], all_images[i], device)
-           
-            episode_psnr.append(psnr_value)
-            episode_lpips.append(lpips_value)
-            episode_fid.append(fid_value)
-        mean_psnr = np.mean(episode_psnr)   
-        mean_lpips = np.mean(episode_lpips)
-        mean_fid = np.mean(episode_fid)
-        print(f"PSNR: {mean_psnr}, LPIPS: {mean_lpips}, FID: {mean_fid}")
-        all_episode_psnr.append(mean_psnr)
-        all_episode_lpips.append(mean_lpips)
-        all_episode_fid.append(mean_fid)
+                            
+                            additional_model_inputs["RT"] = current_camera_traj
+
+                            def denoiser(input, sigma, c):
+                                return model.denoiser(
+                                    model.model, input, sigma, c, **additional_model_inputs
+                                )
+
+                            results = []
+                        
+                            randn = torch.randn(shape, device=device)
+                            samples_z = model.sampler(denoiser, randn, cond=c, uc=uc)
+                            model.en_and_decode_n_samples_a_time = 1
+                            samples_x = model.decode_first_stage(samples_z)
+                            samples = torch.clamp((samples_x + 1.0) / 2.0, min=0.0, max=1.0) # [1*t, c, h, w]
+                            results.append(samples)
+
+                            samples = torch.stack(results, dim=0) # [sample_num, t, c, h, w]
+                            samples = samples.data.cpu()
+                            samples = samples[0]
+
+                            if i == generation_steps - 1:
+                                for j in range((actual_num_frames-1)%(diffusion_num_frames-1)+1):
+                                    if i !=0 and j == 0:
+                                        continue # skip the repeated first frame
+                                    diffusion_result_pil.append(Image.fromarray((samples[j].permute(1, 2, 0) * 255).numpy().astype(np.uint8)))
+                            else:
+                                for j in range(diffusion_num_frames):
+                                    if i !=0 and j == 0:
+                                        continue # skip the repeated first frame
+                                    diffusion_result_pil.append(Image.fromarray((samples[j].permute(1, 2, 0) * 255).numpy().astype(np.uint8)))
+                        
+                print(f"saving {len(diffusion_result_pil)} images to {output_folder}")
+                for i, pil_img in enumerate(diffusion_result_pil):
+                    pil_img.save(os.path.join(output_folder, f'final_{i}.png'))
+            else:
+                diffusion_result_pil = [Image.open(os.path.join(output_folder, image)) for image in os.listdir(output_folder) if image.startswith('final_')]
+                print(f"loading {len(diffusion_result_pil)} images from {output_folder}")
+                if return_flag:
+                    all_image_paths = all_image_paths + all_image_paths[::-1]
+            
+            all_images = [Image.open(image_path).resize((args.width, args.height)) for image_path in all_image_paths]
+
+            for i in range(len(diffusion_result_pil)):
+                psnr_value, lpips_value, fid_value = calculate_score(diffusion_result_pil[i], all_images[i], device)
+            
+                episode_psnr.append(psnr_value)
+                episode_lpips.append(lpips_value)
+                episode_fid.append(fid_value)
+            mean_psnr = np.mean(episode_psnr)   
+            mean_lpips = np.mean(episode_lpips)
+            mean_fid = np.mean(episode_fid)
+            print(f"PSNR: {mean_psnr}, LPIPS: {mean_lpips}, FID: {mean_fid}")
+            all_episode_psnr.append(mean_psnr)
+            all_episode_lpips.append(mean_lpips)
+            all_episode_fid.append(mean_fid)
+        except Exception as e:
+            print(f"error in episode {episode_id}: {e}")
+            continue
 
 
     print(f"PSNR: {np.mean(all_episode_psnr)}, LPIPS: {np.mean(all_episode_lpips)}, FID: {np.mean(all_episode_fid)}")

@@ -1,4 +1,4 @@
-NUM_GPUS=2
+NUM_GPUS=8
 
 for i in $(seq 0 $((NUM_GPUS-1))); do
     CUDA_VISIBLE_DEVICES=$i python eval_realstate.py \
